@@ -1,28 +1,47 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser, IsAuthenticatedOrReadOnly
+from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from django.db.models import Q, Min, Max
-from .models import Event, Ticket, Order, Category
+from django.db.models import Q
+from .models import Event, Ticket, Order, Category, OrderItem  # Добавлен OrderItem
 from .serializers import (
     EventSerializer, TicketSerializer, OrderSerializer,
-    CategorySerializer, OrderCreateSerializer
+    CategorySerializer, OrderCreateSerializer, UserRegistrationSerializer
 )
 from .filters import EventFilter
+from .permissions import IsOrganizerOrReadOnly
+
+
+class UserRegistrationView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = UserRegistrationSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            return Response({
+                "message": "User created successfully",
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email
+                }
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [permissions.IsAdminUser]
 
 
 class EventViewSet(viewsets.ModelViewSet):
     queryset = Event.objects.filter(is_active=True).select_related('organizer', 'category').prefetch_related('tickets')
     serializer_class = EventSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOrganizerOrReadOnly]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = EventFilter
     search_fields = ['title', 'description']
@@ -48,7 +67,7 @@ class EventViewSet(viewsets.ModelViewSet):
 
 class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         return Order.objects.filter(user=self.request.user).prefetch_related(
@@ -72,11 +91,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                 })
                 total_price += float(ticket.price) * quantity
 
-            # Create order
+            # Create order with pending status
             order = Order.objects.create(
                 user=request.user,
                 total_price=total_price,
-                status='completed'
+                status='pending'  # Changed from 'completed' to 'pending'
             )
 
             # Create order items
@@ -91,3 +110,50 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response(order_serializer.data, status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def confirm(self, request, pk=None):
+        """Confirm and complete the order (simulate payment)"""
+        order = self.get_object()
+
+        if order.user != request.user:
+            return Response({"error": "Not your order"}, status=status.HTTP_403_FORBIDDEN)
+
+        if order.status != 'pending':
+            return Response({"error": "Order already processed"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # In a real application, this would integrate with a payment gateway
+        # For now, we'll just mark it as completed
+        order.status = 'completed'
+        order.save()
+
+        return Response({
+            "message": "Order confirmed successfully",
+            "order_id": order.id,
+            "status": order.status
+        })
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel a pending order"""
+        order = self.get_object()
+
+        if order.user != request.user:
+            return Response({"error": "Not your order"}, status=status.HTTP_403_FORBIDDEN)
+
+        if order.status != 'pending':
+            return Response({"error": "Only pending orders can be canceled"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Restore ticket quantities
+        for order_item in order.order_items.all():
+            order_item.ticket.quantity_available += order_item.quantity
+            order_item.ticket.save()
+
+        order.status = 'canceled'
+        order.save()
+
+        return Response({
+            "message": "Order canceled successfully",
+            "order_id": order.id,
+            "status": order.status
+        })

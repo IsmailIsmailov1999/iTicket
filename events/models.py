@@ -66,6 +66,34 @@ class Order(models.Model):
             total += item.ticket.price * item.quantity
         return total
 
+    def confirm_order(self):
+        """Confirm order and finalize ticket allocation"""
+        if self.status == 'pending':
+            self.status = 'completed'
+            self.save()
+            return True
+        return False
+
+    def cancel_order(self):
+        """Cancel order and restore ticket quantities"""
+        if self.status == 'pending':
+            for order_item in self.order_items.all():
+                order_item.ticket.quantity_available += order_item.quantity
+                order_item.ticket.save()
+            self.status = 'canceled'
+            self.save()
+            return True
+        return False
+
+    def __str__(self):
+        return f"Order #{self.id} - {self.user.username}"
+
+    def calculate_total_price(self):
+        total = Decimal('0.00')
+        for item in self.order_items.all():
+            total += item.ticket.price * item.quantity
+        return total
+
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='order_items')

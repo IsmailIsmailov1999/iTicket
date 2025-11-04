@@ -1,24 +1,48 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
 from .models import Event, Ticket, Order, OrderItem, Category
+
+
+class UserRegistrationSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, validators=[validate_password])
+    password_confirm = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password', 'password_confirm', 'first_name', 'last_name']
+        read_only_fields = ['id']
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['password_confirm']:
+            raise serializers.ValidationError({"password": "Password fields didn't match."})
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop('password_confirm')
+        user = User.objects.create_user(**validated_data)
+        return user
 
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name']
+        read_only_fields = ['id', 'username', 'email', 'first_name', 'last_name']
 
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
         fields = ['id', 'name']
+        read_only_fields = ['id', 'name']
 
 
 class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = ['id', 'name', 'price', 'quantity_available']
+        read_only_fields = ['id', 'name', 'price', 'quantity_available']
 
 
 class EventSerializer(serializers.ModelSerializer):
@@ -36,7 +60,7 @@ class EventSerializer(serializers.ModelSerializer):
             'organizer', 'category', 'category_id', 'is_active',
             'created_at', 'updated_at', 'tickets', 'available_tickets'
         ]
-        read_only_fields = ['organizer', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'organizer', 'created_at', 'updated_at', 'available_tickets']
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -48,6 +72,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
         fields = ['id', 'ticket', 'ticket_id', 'quantity']
+        read_only_fields = ['id']
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -60,7 +85,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'user', 'total_price', 'status', 'created_at',
             'order_items'
         ]
-        read_only_fields = ['user', 'total_price', 'created_at']
+        read_only_fields = ['id', 'user', 'total_price', 'created_at', 'status']
 
 
 class OrderCreateSerializer(serializers.Serializer):
